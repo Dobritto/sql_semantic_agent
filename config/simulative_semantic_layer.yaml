@@ -1,0 +1,256 @@
+metrics:
+  active_users:
+    label: "Активные пользователи"
+    description: "Количество уникальных пользователей, которые заходили на платформу за период. Считается по таблице UserEntry."
+    sql: "COUNT(DISTINCT ue.user_id)"
+    aliases:
+      - "активные пользователи"
+      - "активность пользователей"
+      - "DAU"
+      - "MAU"
+      - "пользователи"
+      - "посещаемость"
+    requires_tables: ["userentry"]
+    filter: null
+
+  registrations:
+    label: "Регистрации"
+    description: "Количество новых зарегистрированных пользователей за период."
+    sql: "COUNT(DISTINCT u.id)"
+    aliases:
+      - "регистрации"
+      - "новые пользователи"
+      - "новые регистрации"
+      - "зарегистрировались"
+      - "signups"
+    requires_tables: ["users"]
+    filter: null
+
+  code_runs:
+    label: "Запуски кода"
+    description: "Количество раз когда пользователи нажимали кнопку Выполнить для запуска кода."
+    sql: "COUNT(cr.id)"
+    aliases:
+      - "запуски кода"
+      - "выполнения кода"
+      - "запуски"
+      - "code runs"
+      - "нажали выполнить"
+    requires_tables: ["coderun"]
+    filter: null
+
+  code_submits:
+    label: "Попытки решения"
+    description: "Количество раз когда пользователи нажимали кнопку Проверить для отправки кода на проверку."
+    sql: "COUNT(cs.id)"
+    aliases:
+      - "попытки решения"
+      - "проверки кода"
+      - "сабмиты"
+      - "submits"
+      - "нажали проверить"
+      - "отправок на проверку"
+    requires_tables: ["codesubmit"]
+    filter: null
+
+  successful_submits:
+    label: "Успешные решения"
+    description: "Количество правильных попыток решения задач. is_false = false означает что решение верное."
+    sql: "COUNT(cs.id)"
+    aliases:
+      - "успешные решения"
+      - "правильные решения"
+      - "решённые задачи"
+      - "верные ответы"
+      - "успешные попытки"
+    requires_tables: ["codesubmit"]
+    filter: "cs.is_false = false"
+
+  success_rate:
+    label: "Процент успешных решений"
+    description: "Доля правильных попыток от всех попыток решения задач. is_false = false означает правильное решение."
+    sql: "100.0 * SUM(CASE WHEN cs.is_false = false THEN 1 ELSE 0 END) / COUNT(cs.id)"
+    aliases:
+      - "процент успешных решений"
+      - "доля правильных ответов"
+      - "success rate"
+      - "процент решений"
+      - "конверсия решений"
+    requires_tables: ["codesubmit"]
+    filter: null
+
+  avg_time_spent:
+    label: "Среднее время на попытку"
+    description: "Среднее время выполнения одной попытки решения задачи в секундах."
+    sql: "AVG(cs.time_spent)"
+    aliases:
+      - "среднее время"
+      - "время на попытку"
+      - "время решения"
+      - "avg time"
+      - "сколько времени тратят"
+    requires_tables: ["codesubmit"]
+    filter: null
+
+  transactions_sum:
+    label: "Сумма транзакций"
+    description: "Суммарное количество CodeCoins по транзакциям за период."
+    sql: "SUM(t.value)"
+    aliases:
+      - "транзакции"
+      - "сумма транзакций"
+      - "codecoins"
+      - "монеты"
+      - "начислено монет"
+      - "списано монет"
+    requires_tables: ["transaction"]
+    filter: null
+
+  test_starts:
+    label: "Начатые тесты"
+    description: "Количество раз когда пользователи нажимали кнопку Начать тест."
+    sql: "COUNT(ts.id)"
+    aliases:
+      - "начатые тесты"
+      - "старты тестов"
+      - "начали тест"
+      - "test starts"
+    requires_tables: ["teststart"]
+    filter: null
+
+  unique_problem_solvers:
+    label: "Уникальные решатели задач"
+    description: "Количество уникальных пользователей, которые хотя бы раз отправляли код на проверку."
+    sql: "COUNT(DISTINCT cs.user_id)"
+    aliases:
+      - "уникальные решатели"
+      - "пользователи решавшие задачи"
+      - "решатели"
+    requires_tables: ["codesubmit"]
+    filter: null
+
+dimensions:
+  date:
+    label: "Дата"
+    description: "Группировка по дате события."
+    column: "DATE(ue.entry_at)"
+    join: null
+    group_by: "DATE(ue.entry_at)"
+    aliases:
+      - "дата"
+      - "по дням"
+      - "день"
+      - "daily"
+
+  language:
+    label: "Язык программирования"
+    description: "Язык на котором пользователь писал код: Python, SQL и т.д."
+    column: "l.name"
+    join: "JOIN language l ON cr.language_id = l.id"
+    group_by: "l.name"
+    aliases:
+      - "язык"
+      - "языки"
+      - "язык программирования"
+      - "language"
+      - "python"
+      - "sql"
+
+  problem:
+    label: "Задача"
+    description: "Конкретная задача на платформе по которой считается метрика."
+    column: "p.name"
+    join: "JOIN problem p ON cs.problem_id = p.id"
+    group_by: "p.name"
+    aliases:
+      - "задача"
+      - "задачи"
+      - "problem"
+      - "по задачам"
+
+  complexity:
+    label: "Сложность задачи"
+    description: "Уровень сложности задачи: 1 — лёгкая, 2 — средняя, 3 — сложная."
+    column: "p.complexity"
+    join: "JOIN problem p ON cs.problem_id = p.id"
+    group_by: "p.complexity"
+    aliases:
+      - "сложность"
+      - "уровень сложности"
+      - "complexity"
+      - "по сложности"
+
+  company:
+    label: "Компания"
+    description: "Компания к которой относится пользователь — корпоративный клиент платформы."
+    column: "c.name"
+    join: "JOIN users u ON cs.user_id = u.id JOIN company c ON u.company_id = c.id"
+    group_by: "c.name"
+    aliases:
+      - "компания"
+      - "компании"
+      - "company"
+      - "корпоративный клиент"
+      - "клиент"
+
+  tier:
+    label: "Ранг пользователя"
+    description: "Ранг пользователя на платформе (tier)."
+    column: "u.tier"
+    join: "JOIN users u ON cs.user_id = u.id"
+    group_by: "u.tier"
+    aliases:
+      - "ранг"
+      - "tier"
+      - "уровень пользователя"
+      - "по рангам"
+
+  transaction_type:
+    label: "Тип транзакции"
+    description: "Тип транзакции с CodeCoins: начисление или списание."
+    column: "tt.description"
+    join: "JOIN transactiontype tt ON t.type_id = tt.type"
+    group_by: "tt.description"
+    aliases:
+      - "тип транзакции"
+      - "тип"
+      - "начисление"
+      - "списание"
+      - "transaction type"
+
+  page:
+    label: "Страница входа"
+    description: "Страница сайта с которой пользователь зашёл на платформу."
+    column: "pg.name"
+    join: "JOIN page pg ON ue.page_id = pg.id"
+    group_by: "pg.name"
+    aliases:
+      - "страница"
+      - "страница входа"
+      - "page"
+      - "откуда зашли"
+
+db_schema: |
+  -- users: id, username, first_name, last_name, is_active, date_joined, email, referal_user, company_id, tier, score
+  -- userentry: id, entry_at, page_id, user_id (первый вход пользователя за каждые сутки)
+  -- page: id, path, name, title, description, keywords
+  -- company: id, name, description, logo, db_cred, site, welcome_bonus
+  -- language: id, name
+  -- problem: id, name, complexity, bonus, task, solution, cost, rating, page_id, solution_cost, priority, is_visible, is_private
+  -- languagetoproblem: ltp_id, pr_id, lang_id
+  -- coderun: id, created_at, problem_id, user_id, language_id (нажали Выполнить)
+  -- codesubmit: id, created_at, code, problem_id, user_id, is_false, time_spent, language_id (нажали Проверить; is_false=false значит решение верное)
+  -- problem_to_company: id, name, task, cost, company_id, problem_id, bonus, priority
+  -- test: id, name, page_id, cost, complexity, priority, is_visible, is_private, repeat_cost
+  -- testquestion: id, question_num, value, tag, test_id, explanation, type_question
+  -- testanswer: id, option, value, is_correct, question_id
+  -- teststart: id, created_at, test_id, user_id
+  -- testresult: id, created_at, answer_id, question_id, test_id, user_id, value
+  -- transactiontype: type, description, value
+  -- transaction: id, created_at, value, type_id, user_id
+
+  -- Важные особенности:
+  -- userentity фиксирует только ПЕРВЫЙ вход за сутки
+  -- codesubmit.is_false = false означает ПРАВИЛЬНОЕ решение (не ошибку!)
+  -- transaction type_id 1,23-28 = списание; 2-22,29 = начисление
+  -- testresult: 1 строка = 1 вопрос теста, answer_id может быть NULL если пропущен

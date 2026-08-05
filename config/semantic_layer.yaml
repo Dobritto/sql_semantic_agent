@@ -1,0 +1,198 @@
+metrics:
+  revenue:
+    label: "Выручка"
+    description: "Сумма фактически оплаченного дохода: цена × количество минус скидки. Считается только по завершённым заказам."
+    sql: "SUM(oi.price * oi.quantity - oi.discount_amount)"
+    aliases:
+      - "выручка"
+      - "доход"
+      - "оборот"
+      - "сумма продаж"
+      - "объём продаж"
+      - "revenue"
+    requires_tables: ["orders", "order_items"]
+    filter: "o.status = 'completed'"
+
+  orders_count:
+    label: "Количество заказов"
+    description: "Число уникальных заказов. Включает только завершённые (completed). Отменённые не учитываются."
+    sql: "COUNT(DISTINCT o.order_id)"
+    aliases:
+      - "количество заказов"
+      - "число заказов"
+      - "заказы"
+      - "кол-во заказов"
+      - "orders"
+    requires_tables: ["orders"]
+    filter: "o.status = 'completed'"
+
+  aov:
+    label: "Средний чек"
+    description: "Средняя сумма одного завершённого заказа (Average Order Value). Считается как выручка / количество заказов."
+    sql: "SUM(oi.price * oi.quantity - oi.discount_amount) / COUNT(DISTINCT o.order_id)"
+    aliases:
+      - "средний чек"
+      - "aov"
+      - "average order value"
+      - "средняя стоимость заказа"
+      - "средний заказ"
+    requires_tables: ["orders", "order_items"]
+    filter: "o.status = 'completed'"
+
+  unique_customers:
+    label: "Уникальные покупатели"
+    description: "Количество уникальных клиентов, совершивших хотя бы один завершённый заказ за период."
+    sql: "COUNT(DISTINCT o.customer_id)"
+    aliases:
+      - "уникальные покупатели"
+      - "покупатели"
+      - "клиенты"
+      - "уникальные клиенты"
+      - "число покупателей"
+    requires_tables: ["orders"]
+    filter: "o.status = 'completed'"
+
+  cancellation_rate:
+    label: "Доля отмен"
+    description: "Процент отменённых заказов от общего числа. Высокая доля может сигнализировать о проблемах с доставкой или качеством."
+    sql: "100.0 * SUM(CASE WHEN o.status = 'cancelled' THEN 1 ELSE 0 END) / COUNT(o.order_id)"
+    aliases:
+      - "отмены"
+      - "доля отмен"
+      - "процент отмен"
+      - "cancellation rate"
+      - "отменённые заказы"
+    requires_tables: ["orders"]
+    filter: null
+
+  avg_delivery_time:
+    label: "Среднее время доставки"
+    description: "Среднее время доставки в минутах для заказов с каналом 'delivery'. Для других каналов не применимо."
+    sql: "AVG(o.delivery_minutes)"
+    aliases:
+      - "время доставки"
+      - "среднее время доставки"
+      - "скорость доставки"
+      - "delivery time"
+    requires_tables: ["orders"]
+    filter: "o.channel = 'delivery' AND o.status = 'completed'"
+
+  discount_share:
+    label: "Доля скидок"
+    description: "Процент суммы скидок от общей выручки (до скидок). Показывает промо-нагрузку на маржу."
+    sql: "100.0 * SUM(oi.discount_amount) / SUM(oi.price * oi.quantity)"
+    aliases:
+      - "скидки"
+      - "доля скидок"
+      - "промо"
+      - "промо нагрузка"
+      - "discount share"
+    requires_tables: ["orders", "order_items"]
+    filter: "o.status = 'completed'"
+
+dimensions:
+  category:
+    label: "Категория товара"
+    description: "Категория продукта: молочные, овощи, готовая еда и т.д."
+    table: "categories"
+    column: "c.category_name"
+    join: "JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN categories c ON p.category_id = c.category_id"
+    group_by: "c.category_name"
+    aliases:
+      - "категория"
+      - "категории"
+      - "product category"
+
+  city:
+    label: "Город"
+    description: "Город магазина, в котором сделан заказ."
+    table: "stores"
+    column: "st.city"
+    join: "JOIN stores st ON o.store_id = st.store_id"
+    group_by: "st.city"
+    aliases:
+      - "город"
+      - "города"
+      - "city"
+
+  channel:
+    label: "Канал продаж"
+    description: "Канал заказа: offline, delivery или pickup."
+    table: "orders"
+    column: "o.channel"
+    join: null
+    group_by: "o.channel"
+    aliases:
+      - "канал"
+      - "каналы"
+      - "channel"
+      - "способ заказа"
+
+  loyalty_level:
+    label: "Уровень лояльности"
+    description: "Уровень программы лояльности покупателя: base, silver, gold."
+    table: "customers"
+    column: "cu.loyalty_level"
+    join: "JOIN customers cu ON o.customer_id = cu.customer_id"
+    group_by: "cu.loyalty_level"
+    aliases:
+      - "лояльность"
+      - "уровень лояльности"
+      - "loyalty"
+      - "сегмент клиентов"
+
+  store_format:
+    label: "Формат магазина"
+    description: "Формат магазина: mini, standard или darkstore."
+    table: "stores"
+    column: "st.store_format"
+    join: "JOIN stores st ON o.store_id = st.store_id"
+    group_by: "st.store_format"
+    aliases:
+      - "формат"
+      - "формат магазина"
+      - "store format"
+      - "тип магазина"
+
+  product:
+    label: "Товар"
+    description: "Конкретный товар из каталога."
+    table: "products"
+    column: "p.product_name"
+    join: "JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id"
+    group_by: "p.product_name"
+    aliases:
+      - "товар"
+      - "продукт"
+      - "товары"
+      - "продукты"
+      - "product"
+
+  is_private_label:
+    label: "СТМ / Не СТМ"
+    description: "Признак собственной торговой марки (private label). 1 = СТМ, 0 = внешний бренд."
+    table: "products"
+    column: "CASE WHEN p.is_private_label = 1 THEN 'СТМ' ELSE 'Внешний бренд' END"
+    join: "JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id"
+    group_by: "p.is_private_label"
+    aliases:
+      - "стм"
+      - "private label"
+      - "собственная торговая марка"
+      - "бренд"
+
+db_schema: |
+  -- customers: customer_id, registration_date, city, gender, birth_year, loyalty_level
+  -- stores: store_id, city, store_format, opened_date
+  -- categories: category_id, category_name
+  -- products: product_id, product_name, category_id, is_private_label, base_price
+  -- orders: order_id, customer_id, store_id, order_date, channel, status, delivery_minutes, promo_flag
+  -- order_items: order_item_id, order_id, product_id, quantity, price, discount_amount
+  
+  -- Базовый join для большинства запросов:
+  -- FROM orders o
+  -- LEFT JOIN order_items oi ON o.order_id = oi.order_id
+  -- LEFT JOIN products p ON oi.product_id = p.product_id
+  -- LEFT JOIN categories c ON p.category_id = c.category_id
+  -- LEFT JOIN stores st ON o.store_id = st.store_id
+  -- LEFT JOIN customers cu ON o.customer_id = cu.customer_id
