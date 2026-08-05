@@ -1,25 +1,14 @@
-import sqlite3
 import psycopg2
 
 
 class DBClient:
-    def __init__(self, db_type: str = 'postrgres', **kwargs):
-        self.db_type = db_type
-        self.kwargs = kwargs
+    def __init__(self, host: str, port: int, dbname: str, user: str, password: str):
+        self.connection_params = dict(
+            host=host, port=port, dbname=dbname, user=user, password=password,
+        )
 
     def _get_connection(self):
-        if self.db_type == 'sqlite':
-            path = self.kwargs['path']
-            return sqlite3.connect(f'file:{path}?mode=ro', uri=True)
-
-        elif self.db_type == 'postgres':
-            return psycopg2.connect(
-                host=self.kwargs['host'],
-                port=self.kwargs['port'],
-                dbname=self.kwargs['dbname'],
-                user=self.kwargs['user'],
-                password=self.kwargs['password']
-            )
+        return psycopg2.connect(**self.connection_params)
 
     def run(self, sql: str) -> tuple[bool, list[str] | str, list[tuple] | None]:
         """

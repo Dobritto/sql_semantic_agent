@@ -1,7 +1,7 @@
 metrics:
   active_users:
     label: "Активные пользователи"
-    description: "Количество уникальных пользователей, которые заходили на платформу за период. Считается по таблице UserEntry."
+    description: "Количество уникальных пользователей, которые заходили на платформу за период. Считается по таблице userentry. Важно: userentry фиксирует только первый вход за каждые сутки."
     sql: "COUNT(DISTINCT ue.user_id)"
     aliases:
       - "активные пользователи"
@@ -10,12 +10,61 @@ metrics:
       - "MAU"
       - "пользователи"
       - "посещаемость"
+      - "active users"
+      - "заходили на платформу"
     requires_tables: ["userentry"]
     filter: null
+    examples:
+      - question: "MAU за 2022 год — среднее число активных пользователей в месяц"
+        sql: |
+          -- MAU: считаем месяцы где было минимум 25 активных дней
+          -- HAVING отсекает неполные месяцы
+          WITH groupped AS (
+              SELECT
+                  COUNT(DISTINCT user_id) AS cnt
+              FROM userentry u
+              GROUP BY to_char(entry_at, 'YYYY-MM')
+              HAVING COUNT(DISTINCT to_char(entry_at, 'YYYY-MM-DD')) >= 25
+          )
+          SELECT ROUND(AVG(cnt)) AS mau
+          FROM groupped
+
+      - question: "Динамика уникальных пользователей по дням с 2022 года"
+        sql: |
+          -- Считаем накопительно уникальных пользователей
+          -- UNION объединяет активность из codesubmit и coderun
+          WITH activities AS (
+              SELECT user_id, to_char(created_at, 'YYYY-MM-DD') AS ymd
+              FROM codesubmit c
+              WHERE created_at >= '2022-01-01'
+              UNION
+              SELECT user_id, to_char(created_at, 'YYYY-MM-DD')
+              FROM coderun c2
+              WHERE created_at >= '2022-01-01'
+          ),
+          calculated AS (
+              SELECT
+                  ymd,
+                  user_id,
+                  CASE WHEN LAG(user_id) OVER (PARTITION BY user_id ORDER BY ymd) IS NULL
+                       THEN 1 ELSE 0 END AS is_first
+              FROM activities a
+          ),
+          find_unique AS (
+              SELECT
+                  ymd,
+                  SUM(is_first) OVER (ORDER BY ymd) AS unique_cnt,
+                  ROW_NUMBER() OVER (PARTITION BY ymd) AS rnk
+              FROM calculated
+          )
+          SELECT ymd, unique_cnt
+          FROM find_unique
+          WHERE rnk = 1
+          ORDER BY ymd
 
   registrations:
     label: "Регистрации"
-    description: "Количество новых зарегистрированных пользователей за период."
+    description: "Количество новых зарегистрированных пользователей за период. Дата регистрации — поле date_joined в таблице users."
     sql: "COUNT(DISTINCT u.id)"
     aliases:
       - "регистрации"
@@ -23,8 +72,250 @@ metrics:
       - "новые регистрации"
       - "зарегистрировались"
       - "signups"
+      - "registrations"
+      - "прирост пользователей"
     requires_tables: ["users"]
     filter: null
+    examples:
+      - question: "Динамика регистраций по дням — изменение пикового значения"
+        sql: |
+          -- Показываем как текущее значение соотносится с историческим максимумом
+          -- diff < 0 значит ещё не достигли прежнего пика
+          WITH calendar AS (
+              SELECT CAST('2022-01-01' AS date) + (n || ' day')::interval AS dt
+              FROM generate_series(0, 110) n
+          ),
+          registrations AS (
+              SELECT
+                  date_trunc('day', date_joined) AS ymd,
+                  COUNT(*) AS cnt
+              FROM users u
+              GROUP BY ymd
+          )
+          SELECT
+              c.dt,
+              COALESCE(r.cnt, 0) AS cnt,
+              MAX(cnt) OVER (ORDER BY dt) AS max_cnt,
+              COALESCE(r.cnt, 0) - MAX(cnt) OVER (ORDER BY dt) AS diff
+          FROM calendar c
+          LEFT JOIN registrations r ON c.dt = r.ymd
+          ORDER BY c.dt
+
+      - question: "Регистрации по месяцам за 2022 год"
+        sql: |
+          -- to_char для группировки по месяцу в PostgreSQL (не strftime!)
+          SELECT
+              to_char(date_joined, 'YYYY-MM') AS month,
+              COUNT(DISTINCT id) AS registrations
+          FROM users
+          WHERE date_joined >= '2022-01-01'
+            AND date_joined < '2023-01-01'
+          GROUP BY month
+          ORDER BY registrations DESC
+
+  code_submits:
+    label: "Попытки решения"
+    description: "Количество раз когда пользователи нажимали кнопку Проверить для отправки кода на проверку. Таблица codesubmit."
+    sql: "COUNT(cs.id)"
+    aliases:
+      - "попытки решения"
+      - "проверки кода"
+      - "сабмиты"
+      - "submits"
+      - "нажали проверить"
+      - "отправок на проверку"
+      - "code submits"
+    requires_tables: ["codesubmit"]
+    filter: null
+    examples:
+      - question: "Распределение числа решённых задач и тестов по пользователям"
+        sql: |
+          -- Считаем среднее и медиану по задачам и тестам
+          -- percentile_disc — PostgreSQL функция для медианы
+          WITH tests AS (
+              SELECT user_id, COUNT(DISTINCT test_id) AS tests_cnt
+              FROM teststart t
+              GROUP BY user_id
+          ),
+          problems AS (
+              SELECT user_id, problem_id FROM coderun c
+              UNION ALL
+              SELECT user_id, problem_id FROM codesubmit c2
+          ),
+          agg_problems AS (
+              SELECT user_id, COUNT(DISTINCT problem_id) AS problems_cnt
+              FROM problems
+              GROUP BY user_id
+          ),
+          agg AS (
+              SELECT u.id, t.tests_cnt, a.problems_cnt
+              FROM users u
+              LEFT JOIN tests t ON u.id = t.user_id
+              LEFT JOIN agg_problems a ON u.id = a.user_id
+          )
+          SELECT
+              ROUND(AVG(problems_cnt), 2) AS problems_avg,
+              ROUND(AVG(tests_cnt), 2) AS tests_avg,
+              percentile_disc(0.5) WITHIN GROUP (ORDER BY problems_cnt) AS problems_median,
+              percentile_disc(0.5) WITHIN GROUP (ORDER BY tests_cnt) AS tests_median
+          FROM agg
+
+  successful_submits:
+    label: "Успешные решения"
+    description: "Количество правильных попыток решения задач. is_false = false означает что решение верное (не ошибочное!)."
+    sql: "COUNT(cs.id)"
+    aliases:
+      - "успешные решения"
+      - "правильные решения"
+      - "решённые задачи"
+      - "верные ответы"
+      - "успешные попытки"
+      - "successful submits"
+    requires_tables: ["codesubmit"]
+    filter: "cs.is_false = false"
+    examples: []
+
+  success_rate:
+    label: "Процент успешных решений"
+    description: "Доля правильных попыток от всех попыток решения задач. is_false = false означает правильное решение."
+    sql: "100.0 * SUM(CASE WHEN cs.is_false = false THEN 1 ELSE 0 END) / COUNT(cs.id)"
+    aliases:
+      - "процент успешных решений"
+      - "доля правильных ответов"
+      - "success rate"
+      - "процент решений"
+      - "конверсия решений"
+    requires_tables: ["codesubmit"]
+    filter: null
+    examples: []
+
+  avg_time_spent:
+    label: "Среднее время на попытку"
+    description: "Среднее время выполнения одной попытки решения задачи в секундах."
+    sql: "AVG(cs.time_spent)"
+    aliases:
+      - "среднее время"
+      - "время на попытку"
+      - "время решения"
+      - "avg time"
+      - "сколько времени тратят"
+      - "average time"
+    requires_tables: ["codesubmit"]
+    filter: null
+    examples: []
+
+  transactions_sum:
+    label: "Сумма транзакций"
+    description: "Суммарное количество CodeCoins по транзакциям за период."
+    sql: "SUM(t.value)"
+    aliases:
+      - "транзакции"
+      - "сумма транзакций"
+      - "codecoins"
+      - "монеты"
+      - "начислено монет"
+      - "списано монет"
+      - "transactions"
+    requires_tables: ["transaction"]
+    filter: null
+    examples: []
+
+  test_starts:
+    label: "Начатые тесты"
+    description: "Количество раз когда пользователи нажимали кнопку Начать тест. Таблица teststart."
+    sql: "COUNT(ts.id)"
+    aliases:
+      - "начатые тесты"
+      - "старты тестов"
+      - "начали тест"
+      - "test starts"
+      - "прошли тест"
+    requires_tables: ["teststart"]
+    filter: null
+    examples: []
+
+  unique_problem_solvers:
+    label: "Уникальные решатели задач"
+    description: "Количество уникальных пользователей, которые хотя бы раз отправляли код на проверку."
+    sql: "COUNT(DISTINCT cs.user_id)"
+    aliases:
+      - "уникальные решатели"
+      - "пользователи решавшие задачи"
+      - "решатели"
+      - "unique solvers"
+    requires_tables: ["codesubmit"]
+    filter: null
+    examples: []
+
+  retention:
+    label: "Retention"
+    description: "Удержание пользователей — доля вернувшихся на платформу через N дней после регистрации. Считается по когортам."
+    sql: null
+    aliases:
+      - "retention"
+      - "удержание"
+      - "возвращаемость"
+      - "n-day retention"
+      - "rolling retention"
+      - "когортный анализ"
+    requires_tables: ["userentry", "users"]
+    filter: null
+    examples:
+      - question: "N-day retention по когортам за 2022 год"
+        sql: |
+          -- N-day retention: пользователь удержан если вернулся ИМЕННО в день N
+          -- diff = количество дней с момента регистрации
+          WITH a AS (
+              SELECT
+                  u.user_id,
+                  date(u.entry_at) AS entry_at,
+                  date(u2.date_joined) AS date_joined,
+                  EXTRACT(days FROM u.entry_at - u2.date_joined) AS diff,
+                  to_char(u2.date_joined, 'YYYY-MM') AS cohort
+              FROM userentry u
+              JOIN users u2 ON u.user_id = u2.id
+              WHERE to_char(u2.date_joined, 'YYYY') = '2022'
+          )
+          SELECT
+              cohort,
+              ROUND(COUNT(DISTINCT CASE WHEN diff = 0 THEN user_id END) * 100.0 /
+                    COUNT(DISTINCT CASE WHEN diff = 0 THEN user_id END), 2) AS "0 (%)",
+              ROUND(COUNT(DISTINCT CASE WHEN diff = 1 THEN user_id END) * 100.0 /
+                    COUNT(DISTINCT CASE WHEN diff = 0 THEN user_id END), 2) AS "1 (%)",
+              ROUND(COUNT(DISTINCT CASE WHEN diff = 7 THEN user_id END) * 100.0 /
+                    COUNT(DISTINCT CASE WHEN diff = 0 THEN user_id END), 2) AS "7 (%)",
+              ROUND(COUNT(DISTINCT CASE WHEN diff = 30 THEN user_id END) * 100.0 /
+                    COUNT(DISTINCT CASE WHEN diff = 0 THEN user_id END), 2) AS "30 (%)"
+          FROM a
+          GROUP BY cohort
+
+      - question: "Rolling retention по когортам за 2022 год"
+        sql: |
+          -- Rolling retention: пользователь удержан если вернулся В ДЕНЬ N ИЛИ ПОЗЖЕ
+          -- Отличие от N-day: diff >= N вместо diff = N
+          WITH a AS (
+              SELECT
+                  u.user_id,
+                  date(u.entry_at) AS entry_at,
+                  date(u2.date_joined) AS date_joined,
+                  EXTRACT(days FROM u.entry_at - u2.date_joined) AS diff,
+                  to_char(u2.date_joined, 'YYYY-MM') AS cohort
+              FROM userentry u
+              JOIN users u2 ON u.user_id = u2.id
+              WHERE to_char(u2.date_joined, 'YYYY') = '2022'
+          )
+          SELECT
+              cohort,
+              ROUND(COUNT(DISTINCT CASE WHEN diff >= 0 THEN user_id END) * 100.0 /
+                    COUNT(DISTINCT CASE WHEN diff >= 0 THEN user_id END), 2) AS "0 (%)",
+              ROUND(COUNT(DISTINCT CASE WHEN diff >= 1 THEN user_id END) * 100.0 /
+                    COUNT(DISTINCT CASE WHEN diff >= 0 THEN user_id END), 2) AS "1 (%)",
+              ROUND(COUNT(DISTINCT CASE WHEN diff >= 7 THEN user_id END) * 100.0 /
+                    COUNT(DISTINCT CASE WHEN diff >= 0 THEN user_id END), 2) AS "7 (%)",
+              ROUND(COUNT(DISTINCT CASE WHEN diff >= 30 THEN user_id END) * 100.0 /
+                    COUNT(DISTINCT CASE WHEN diff >= 0 THEN user_id END), 2) AS "30 (%)"
+          FROM a
+          GROUP BY cohort
 
   code_runs:
     label: "Запуски кода"
@@ -39,108 +330,33 @@ metrics:
     requires_tables: ["coderun"]
     filter: null
 
-  code_submits:
-    label: "Попытки решения"
-    description: "Количество раз когда пользователи нажимали кнопку Проверить для отправки кода на проверку."
-    sql: "COUNT(cs.id)"
-    aliases:
-      - "попытки решения"
-      - "проверки кода"
-      - "сабмиты"
-      - "submits"
-      - "нажали проверить"
-      - "отправок на проверку"
-    requires_tables: ["codesubmit"]
-    filter: null
-
-  successful_submits:
-    label: "Успешные решения"
-    description: "Количество правильных попыток решения задач. is_false = false означает что решение верное."
-    sql: "COUNT(cs.id)"
-    aliases:
-      - "успешные решения"
-      - "правильные решения"
-      - "решённые задачи"
-      - "верные ответы"
-      - "успешные попытки"
-    requires_tables: ["codesubmit"]
-    filter: "cs.is_false = false"
-
-  success_rate:
-    label: "Процент успешных решений"
-    description: "Доля правильных попыток от всех попыток решения задач. is_false = false означает правильное решение."
-    sql: "100.0 * SUM(CASE WHEN cs.is_false = false THEN 1 ELSE 0 END) / COUNT(cs.id)"
-    aliases:
-      - "процент успешных решений"
-      - "доля правильных ответов"
-      - "success rate"
-      - "процент решений"
-      - "конверсия решений"
-    requires_tables: ["codesubmit"]
-    filter: null
-
-  avg_time_spent:
-    label: "Среднее время на попытку"
-    description: "Среднее время выполнения одной попытки решения задачи в секундах."
-    sql: "AVG(cs.time_spent)"
-    aliases:
-      - "среднее время"
-      - "время на попытку"
-      - "время решения"
-      - "avg time"
-      - "сколько времени тратят"
-    requires_tables: ["codesubmit"]
-    filter: null
-
-  transactions_sum:
-    label: "Сумма транзакций"
-    description: "Суммарное количество CodeCoins по транзакциям за период."
-    sql: "SUM(t.value)"
-    aliases:
-      - "транзакции"
-      - "сумма транзакций"
-      - "codecoins"
-      - "монеты"
-      - "начислено монет"
-      - "списано монет"
-    requires_tables: ["transaction"]
-    filter: null
-
-  test_starts:
-    label: "Начатые тесты"
-    description: "Количество раз когда пользователи нажимали кнопку Начать тест."
-    sql: "COUNT(ts.id)"
-    aliases:
-      - "начатые тесты"
-      - "старты тестов"
-      - "начали тест"
-      - "test starts"
-    requires_tables: ["teststart"]
-    filter: null
-
-  unique_problem_solvers:
-    label: "Уникальные решатели задач"
-    description: "Количество уникальных пользователей, которые хотя бы раз отправляли код на проверку."
-    sql: "COUNT(DISTINCT cs.user_id)"
-    aliases:
-      - "уникальные решатели"
-      - "пользователи решавшие задачи"
-      - "решатели"
-    requires_tables: ["codesubmit"]
-    filter: null
-
 dimensions:
   date:
     label: "Дата"
     description: "Группировка по дате события."
-    column: "DATE(ue.entry_at)"
+    column: "to_char(ue.entry_at, 'YYYY-MM-DD')"
     join: null
-    group_by: "DATE(ue.entry_at)"
+    group_by: "to_char(ue.entry_at, 'YYYY-MM-DD')"
     aliases:
       - "дата"
       - "по дням"
       - "день"
       - "daily"
+      - "date"
+      - "по датам"
+
+  month:
+    label: "Месяц"
+    description: "Группировка по месяцу события в формате YYYY-MM."
+    column: "to_char(ue.entry_at, 'YYYY-MM')"
+    join: null
+    group_by: "to_char(ue.entry_at, 'YYYY-MM')"
+    aliases:
+      - "месяц"
+      - "по месяцам"
+      - "month"
+      - "monthly"
+      - "ежемесячно"
 
   language:
     label: "Язык программирования"
@@ -155,6 +371,7 @@ dimensions:
       - "language"
       - "python"
       - "sql"
+      - "по языкам"
 
   problem:
     label: "Задача"
@@ -167,6 +384,7 @@ dimensions:
       - "задачи"
       - "problem"
       - "по задачам"
+      - "задание"
 
   complexity:
     label: "Сложность задачи"
@@ -192,6 +410,7 @@ dimensions:
       - "company"
       - "корпоративный клиент"
       - "клиент"
+      - "по компаниям"
 
   tier:
     label: "Ранг пользователя"
@@ -204,10 +423,11 @@ dimensions:
       - "tier"
       - "уровень пользователя"
       - "по рангам"
+      - "грейд"
 
   transaction_type:
     label: "Тип транзакции"
-    description: "Тип транзакции с CodeCoins: начисление или списание."
+    description: "Тип транзакции с CodeCoins: начисление или списание. type_id 1,23-28 = списание; 2-22,29 = начисление."
     column: "tt.description"
     join: "JOIN transactiontype tt ON t.type_id = tt.type"
     group_by: "tt.description"
@@ -229,17 +449,21 @@ dimensions:
       - "страница входа"
       - "page"
       - "откуда зашли"
+      - "по страницам"
 
 db_schema: |
+  -- PostgreSQL база данных (не SQLite!)
+  -- Для дат использовать to_char(), date_trunc(), EXTRACT() — НЕ strftime()
+
   -- users: id, username, first_name, last_name, is_active, date_joined, email, referal_user, company_id, tier, score
-  -- userentry: id, entry_at, page_id, user_id (первый вход пользователя за каждые сутки)
+  -- userentry: id, entry_at, page_id, user_id (только ПЕРВЫЙ вход за каждые сутки!)
   -- page: id, path, name, title, description, keywords
   -- company: id, name, description, logo, db_cred, site, welcome_bonus
   -- language: id, name
   -- problem: id, name, complexity, bonus, task, solution, cost, rating, page_id, solution_cost, priority, is_visible, is_private
   -- languagetoproblem: ltp_id, pr_id, lang_id
   -- coderun: id, created_at, problem_id, user_id, language_id (нажали Выполнить)
-  -- codesubmit: id, created_at, code, problem_id, user_id, is_false, time_spent, language_id (нажали Проверить; is_false=false значит решение верное)
+  -- codesubmit: id, created_at, code, problem_id, user_id, is_false, time_spent, language_id (нажали Проверить)
   -- problem_to_company: id, name, task, cost, company_id, problem_id, bonus, priority
   -- test: id, name, page_id, cost, complexity, priority, is_visible, is_private, repeat_cost
   -- testquestion: id, question_num, value, tag, test_id, explanation, type_question
@@ -249,8 +473,14 @@ db_schema: |
   -- transactiontype: type, description, value
   -- transaction: id, created_at, value, type_id, user_id
 
-  -- Важные особенности:
-  -- userentity фиксирует только ПЕРВЫЙ вход за сутки
-  -- codesubmit.is_false = false означает ПРАВИЛЬНОЕ решение (не ошибку!)
-  -- transaction type_id 1,23-28 = списание; 2-22,29 = начисление
-  -- testresult: 1 строка = 1 вопрос теста, answer_id может быть NULL если пропущен
+  -- Критически важно:
+  -- 1. codesubmit.is_false = false → ПРАВИЛЬНОЕ решение (не ошибка!)
+  -- 2. userentry фиксирует только ПЕРВЫЙ вход за сутки
+  -- 3. transaction type_id 1,23-28 = списание; 2-22,29 = начисление
+  -- 4. Данные только за 2021-2022 год
+  -- 5. НЕ использовать strftime() — это SQLite функция!
+
+db_date_range:
+  date_from: "2021-01-01"
+  date_to: "2022-12-31"
+  description: "Данные в БД только за этот период"

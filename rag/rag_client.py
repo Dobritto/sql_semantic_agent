@@ -1,12 +1,9 @@
-from FlagEmbedding import BGEM3FlagModel
 import numpy as np
 import yaml
 from sentence_transformers import SentenceTransformer, util
 import os
 
 os.environ["HF_HUB_DISABLE_WARNINGS"] = "1"
-os.environ["TRANSFORMERS_OFFLINE"] = "1"  # не лезть в интернет
-os.environ["HF_DATASETS_OFFLINE"] = "1"
 
 
 class SemanticIndex:

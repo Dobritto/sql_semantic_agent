@@ -1,0 +1,14 @@
+# LLM
+openai>=1.40.0
+python-dotenv>=1.0.1
+
+# DB
+psycopg2-binary>=2.9.9
+
+# Validation / config
+pydantic>=2.7.0
+PyYAML>=6.0.1
+
+# Semantic matching (эмбеддинги метрик/измерений)
+sentence-transformers>=3.0.0
+numpy>=1.26.0

@@ -1,19 +1,24 @@
+import os
+
 from llm.prompt_builder import build_prompt
 from rag.rag_client import SemanticIndex
 from llm.llm_client import LLMClient
 from db.db_client import DBClient
 from agent.decomposer import Decomposer
 from agent.router import Router
+from dotenv import load_dotenv
+
+load_dotenv()
 
 si = SemanticIndex("config/simulative_semantic_layer.yaml")
 llm = LLMClient()
 db = DBClient(
     db_type="postgres",
-    host="95.163.241.236",
-    port=5432,
-    dbname="simulative",
-    user="student",
-    password="qweasd963",
+    host=os.environ['DB_HOST'],
+    port=int(os.environ.get('DB_PORT', 5432)),
+    dbname=os.environ.get("DB_NAME", 'simulative'),
+    user=os.environ['DB_USER'],
+    password=os.environ['DB_PASSWORD'],
 )
 decomposer = Decomposer(llm)
 MAX_ATTEMPTS = 3
@@ -42,7 +47,7 @@ if route_result.tool == 'sql_tool':
 
     for i, subtask in enumerate(decomposition.subtasks, 1):
         print(f'Подзадача {i}: {subtask.question}')
-        dimensions = si.find_dimensions(question, threshold=0.45)
+        dimensions = si.find_dimensions(subtask.question, threshold=0.45)
         dim_ids = [d[0] for d in dimensions]
 
         prompt = build_prompt(
@@ -88,7 +93,6 @@ if route_result.tool == 'sql_tool':
 
                 print('I ask LLM to fix this SQL')
                 sql = llm.fix_sql(sql=sql, error=error, prompt=prompt)
-
 
     print("----Итоговый ответ------")
     summary_prompt = f"""
