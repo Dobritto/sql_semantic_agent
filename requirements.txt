@@ -12,3 +12,8 @@ PyYAML>=6.0.1
 # Semantic matching (эмбеддинги метрик/измерений)
 sentence-transformers>=3.0.0
 numpy>=1.26.0
+# Оркестрация агента
+langgraph>=0.2.0
+
+
+pytest>=8.0.0
